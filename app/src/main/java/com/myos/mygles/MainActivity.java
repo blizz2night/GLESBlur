@@ -13,6 +13,7 @@ import android.util.Log;
 
 import java.io.BufferedReader;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
@@ -24,8 +25,8 @@ import javax.microedition.khronos.opengles.GL10;
 public class MainActivity extends AppCompatActivity {
     private static final String TAG = "MainActivity";
     private GLSurfaceView mPreview;
-    private int mTexture;
-    private static final float[] VERTEX_DATA = {
+    private int mOriginTex;
+    private static final float[] SCREEN_VERTEX_DATA = {
             // Vertex X, Y
             // Texture coordinates U, V
             -1f, -1f, 0f, 1f,
@@ -33,6 +34,17 @@ public class MainActivity extends AppCompatActivity {
             -1f, 1f, 0f, 0f,
             1f, 1f, 1f, 0f,
     };
+    private static final float[] VERTEX_DATA = {
+            // Vertex X, Y
+            // Texture coordinates U, V
+            -1f, -1f, 0f, 0f,
+            1f, -1f, 1f, 0f,
+            -1f, 1f, 0f, 1f,
+            1f, 1f, 1f, 1f,
+    };
+
+    public static final float[] OFFSET = new float[]{0.0f, 1.0f, 2.0f, 3.0f, 4.0f};
+    public static final float[] WEIGHT = new float[]{0.2270270270f, 0.1945945946f, 0.1216216216f, 0.0540540541f, 0.0162162162f};
     private static final int BYTES_PER_FLOAT = 4;
     private static final int VERTEX_COUNT = 4;
     private static final int POSITION_OFFSET = 0;
@@ -44,102 +56,186 @@ public class MainActivity extends AppCompatActivity {
     private FloatBuffer verticesBuffer;
     private String vertexShaderCode;
     private String fragShaderCode;
-    private int mVertexShaderHandler;
-    private int mFragShaderHandler;
-    private int mProgramHandler;
-    private int mInputImageTextureHandler;
-    private int mPositionHandler;
-    private int mInputTextureCoordinateHandler;
+    private int mVertexShader;
     private Bitmap mImage;
-    private int mFrameBufferHandler;
+    private int mFrameBuffer;
+    private int mFrameBufferTex;
+    private int mHeight;
+    private int mWidth;
+    private FloatBuffer screenVerticesBuffer;
+    private int mfragShader;
+    private int mProgram;
+    private int mPosition;
+    private int mTexCoord;
+    private int mInputTexture;
+    private int mOffset;
+    private int mWeight;
+    private int mVertical;
+    private int mHeightHandle;
+    private int mWidthHandle;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
+        BitmapFactory.Options opt = new BitmapFactory.Options();
+        try (InputStream is = getResources().openRawResource(R.raw.sc)) {
+            mImage = BitmapFactory.decodeStream(is, null, opt);
+        } catch (IOException ex) {
+            Log.e(TAG, "onCreate: ", ex);
+            return;
+        }
+        Log.i(TAG, "onCreate: "+opt.outWidth+"x"+opt.outHeight);
+
         vertexShaderCode = readStringFromResRaw(this, R.raw.vertex_shader);
-        Log.i(TAG, "onCreate: "+vertexShaderCode);
-        fragShaderCode = readStringFromResRaw(this, R.raw.frag_shader);
+        fragShaderCode = readStringFromResRaw(this, R.raw.gauss_frag_shader);
         verticesBuffer = ByteBuffer.allocateDirect(VERTEX_COUNT * STRIDE_BYTES)
                 .order(ByteOrder.nativeOrder())
                 .asFloatBuffer();
         verticesBuffer.position(0);
         verticesBuffer.put(VERTEX_DATA).position(0);
-        mImage = BitmapFactory.decodeResource(getResources(), R.drawable.sc);
+
+        screenVerticesBuffer = ByteBuffer.allocateDirect(VERTEX_COUNT * STRIDE_BYTES)
+                .order(ByteOrder.nativeOrder())
+                .asFloatBuffer();
+        screenVerticesBuffer.position(0);
+        screenVerticesBuffer.put(SCREEN_VERTEX_DATA).position(0);
+
+
+
+
 
         mPreview = findViewById(R.id.preview);
         mPreview.setEGLContextClientVersion(2);
         mPreview.setRenderer(new GLSurfaceView.Renderer() {
             @Override
             public void onSurfaceCreated(GL10 gl, EGLConfig config) {
-                int[] temp = new int[1];
-                GLES20.glGenTextures(1, temp, 0);
+                int[] texs = new int[2];
+                GLES20.glGenTextures(2, texs, 0);
                 checkGLError();
-                mTexture = temp[0];
-                GLES20.glActiveTexture(GLES20.GL_TEXTURE0);
-                GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, mTexture);
+                mOriginTex = texs[0];
+                mFrameBufferTex = texs[1];
+
+                initTexture(GLES20.GL_TEXTURE_2D, mImage.getWidth(), mImage.getHeight(), texs);
+
+                GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, mOriginTex);
                 GLUtils.texImage2D(GLES20.GL_TEXTURE_2D,0, mImage,0);
-                GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_S, GLES20.GL_CLAMP_TO_EDGE);
-                GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_T, GLES20.GL_CLAMP_TO_EDGE);
-                GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_LINEAR);
-                GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MAG_FILTER,  GLES20.GL_LINEAR);
-                checkGLError();
+                GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, 0);
 
-                GLES20.glGenFramebuffers(1, temp, 0);
-                mFrameBufferHandler = temp[0];
+                int[] fb = new int[1];
+                GLES20.glGenFramebuffers(1, fb, 0);
+                mFrameBuffer = fb[0];
+                initFrameBuffer(mFrameBuffer, mFrameBufferTex);
 
-                mVertexShaderHandler = compileShader(GLES20.GL_VERTEX_SHADER, vertexShaderCode);
-                Log.i(TAG, "onSurfaceCreated: " + mVertexShaderHandler);
-                mFragShaderHandler = compileShader(GLES20.GL_FRAGMENT_SHADER, fragShaderCode);
-                Log.i(TAG, "onSurfaceCreated: " + mFragShaderHandler);
-                mProgramHandler = linkProgram(mVertexShaderHandler, mFragShaderHandler);
-                Log.i(TAG, "onSurfaceCreated: " + mProgramHandler);
-                mPositionHandler = GLES20.glGetAttribLocation(mProgramHandler, "a_Position");
-                mInputTextureCoordinateHandler = GLES20.glGetAttribLocation(mProgramHandler, "a_InputTextureCoordinate");
-                mInputImageTextureHandler = GLES20.glGetUniformLocation(mProgramHandler, "u_InputImageTexture");
+                mVertexShader = compileShader(GLES20.GL_VERTEX_SHADER, vertexShaderCode);
+                Log.i(TAG, "compileShader: " + mVertexShader);
+                mfragShader = compileShader(GLES20.GL_FRAGMENT_SHADER, fragShaderCode);
+                Log.i(TAG, "compileShader: " + mfragShader);
+                mProgram = linkProgram(mVertexShader, mfragShader);
+                Log.i(TAG, "linkProgram: " + mProgram);
+                mPosition = GLES20.glGetAttribLocation(mProgram, "a_Position");
+                mTexCoord = GLES20.glGetAttribLocation(mProgram, "a_TexCoord");
+                mOffset = GLES20.glGetUniformLocation(mProgram, "u_Offset");
+                mWeight = GLES20.glGetUniformLocation(mProgram, "u_Weight");
+                mVertical = GLES20.glGetUniformLocation(mProgram, "u_Vertical");
+                mWidthHandle = GLES20.glGetUniformLocation(mProgram, "u_Width");
+                mHeightHandle = GLES20.glGetUniformLocation(mProgram, "u_Height");
+                mInputTexture = GLES20.glGetUniformLocation(mProgram, "u_InputTexture");
                 checkGLError();
 
             }
 
             @Override
             public void onSurfaceChanged(GL10 gl, int width, int height) {
-                GLES20.glViewport(0, 0, width, height);
+                Log.i(TAG, "onSurfaceChanged: "+width+"x"+height);
+                mWidth = width;
+                mHeight = height;
             }
 
             @Override
             public void onDrawFrame(GL10 gl) {
                 GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT);
-                GLES20.glUseProgram(mProgramHandler);
+
+                GLES20.glUseProgram(mProgram);
+                GLES20.glViewport(0, 0, mImage.getWidth(), mImage.getHeight());
                 verticesBuffer.position(POSITION_OFFSET);
                 GLES20.glVertexAttribPointer(
-                        mPositionHandler,
+                        mPosition,
                         POSITION_COUNT,
                         GLES20.GL_FLOAT,
                         false,
                         //x0y0s0t0 x1y1s1t1
                         STRIDE_BYTES,
                         verticesBuffer);
-                GLES20.glEnableVertexAttribArray(mPositionHandler);
+                GLES20.glEnableVertexAttribArray(mPosition);
                 // Pass in the texture coordinates.
                 verticesBuffer.position(TEXTURE_COORDINATE_COUNT);
                 GLES20.glVertexAttribPointer(
-                        mInputTextureCoordinateHandler,
+                        mTexCoord,
                         TEXTURE_COORDINATE_COUNT,
                         GLES20.GL_FLOAT,
                         false,
                         STRIDE_BYTES,
                         verticesBuffer);
-                GLES20.glEnableVertexAttribArray(mInputTextureCoordinateHandler);
+                GLES20.glEnableVertexAttribArray(mTexCoord);
+
+                GLES20.glUniform1fv(mOffset, 5, OFFSET, 0);
+                GLES20.glUniform1fv(mWeight, 5, WEIGHT, 0);
+                GLES20.glUniform1f(mVertical, 0f);
+                GLES20.glUniform1f(mWidthHandle, mImage.getWidth());
+                GLES20.glUniform1f(mHeightHandle, mImage.getHeight());
 
                 GLES20.glActiveTexture(GLES20.GL_TEXTURE0);
-                GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, mTexture);
-                GLES20.glUniform1i(mInputImageTextureHandler, /* x= */ 0);
+                GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, mOriginTex);
+                GLES20.glUniform1i(mInputTexture, /* x= */ 0);
 
+                GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, mFrameBuffer);
+                GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, /* first= */ 0, /* offset= */ VERTEX_COUNT);
+                GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0);
+
+                GLES20.glViewport(0, 0, mWidth, mHeight);
+                screenVerticesBuffer.position(TEXTURE_COORDINATE_COUNT);
+                GLES20.glVertexAttribPointer(
+                        mTexCoord,
+                        TEXTURE_COORDINATE_COUNT,
+                        GLES20.GL_FLOAT,
+                        false,
+                        STRIDE_BYTES,
+                        screenVerticesBuffer);
+                GLES20.glEnableVertexAttribArray(mTexCoord);
+                GLES20.glUniform1f(mVertical, 1f);
+                GLES20.glActiveTexture(GLES20.GL_TEXTURE1);
+                GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, mFrameBufferTex);
+                GLES20.glUniform1i(mInputTexture, /* x= */ 1);
 
                 GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, /* first= */ 0, /* offset= */ VERTEX_COUNT);
             }
         });
-        mPreview.setRenderMode(GLSurfaceView.RENDERMODE_CONTINUOUSLY);
+        mPreview.setRenderMode(GLSurfaceView.RENDERMODE_WHEN_DIRTY);
+    }
+
+    private void initFrameBuffer(int frameBuffer, int texture) {
+        GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, frameBuffer);
+        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, texture);
+        GLES20.glFramebufferTexture2D(GLES20.GL_FRAMEBUFFER, GLES20.GL_COLOR_ATTACHMENT0,
+                GLES20.GL_TEXTURE_2D, mFrameBufferTex, 0);
+        checkFramebufferStatus();
+        GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0);
+        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, 0);
+    }
+
+    private void initTexture(int target, int width, int height, int... textures) {
+        for (int texture : textures) {
+            GLES20.glBindTexture(target, texture);
+            GLES20.glTexImage2D(GLES20.GL_TEXTURE_2D, 0, GLES20.GL_RGBA, width, height, 0,
+                    GLES20.GL_RGBA, GLES20.GL_UNSIGNED_BYTE, null);
+            GLES20.glTexParameteri(target, GLES20.GL_TEXTURE_WRAP_S, GLES20.GL_CLAMP_TO_EDGE);
+            GLES20.glTexParameteri(target, GLES20.GL_TEXTURE_WRAP_T, GLES20.GL_CLAMP_TO_EDGE);
+            GLES20.glTexParameteri(target, GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_LINEAR);
+            GLES20.glTexParameteri(target, GLES20.GL_TEXTURE_MAG_FILTER,  GLES20.GL_LINEAR);
+            checkGLError();
+        }
+        GLES20.glBindTexture(target, 0);
     }
 
     private void checkGLError() {
