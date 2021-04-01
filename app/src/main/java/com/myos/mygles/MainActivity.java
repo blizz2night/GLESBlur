@@ -58,8 +58,8 @@ public class MainActivity extends AppCompatActivity {
     private String fragShaderCode;
     private int mVertexShader;
     private Bitmap mImage;
-    private int mFrameBuffer;
-    private int mFrameBufferTex;
+    private int mVGaussFrameBuffer;
+    private int mVGaussFrameBufferTex;
     private int mHeight;
     private int mWidth;
     private FloatBuffer screenVerticesBuffer;
@@ -73,6 +73,8 @@ public class MainActivity extends AppCompatActivity {
     private int mVertical;
     private int mHeightHandle;
     private int mWidthHandle;
+    private int mHGaussFrameBuffer;
+    private int mHGaussFrameBufferTex;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -110,22 +112,24 @@ public class MainActivity extends AppCompatActivity {
         mPreview.setRenderer(new GLSurfaceView.Renderer() {
             @Override
             public void onSurfaceCreated(GL10 gl, EGLConfig config) {
-                int[] texs = new int[2];
-                GLES20.glGenTextures(2, texs, 0);
+                int[] texs = new int[3];
+                GLES20.glGenTextures(3, texs, 0);
                 checkGLError();
                 mOriginTex = texs[0];
-                mFrameBufferTex = texs[1];
-
+                mVGaussFrameBufferTex = texs[1];
+                mHGaussFrameBufferTex = texs[2];
                 initTexture(GLES20.GL_TEXTURE_2D, mImage.getWidth(), mImage.getHeight(), texs);
 
                 GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, mOriginTex);
                 GLUtils.texImage2D(GLES20.GL_TEXTURE_2D,0, mImage,0);
                 GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, 0);
 
-                int[] fb = new int[1];
-                GLES20.glGenFramebuffers(1, fb, 0);
-                mFrameBuffer = fb[0];
-                initFrameBuffer(mFrameBuffer, mFrameBufferTex);
+                int[] fb = new int[2];
+                GLES20.glGenFramebuffers(2, fb, 0);
+                mVGaussFrameBuffer = fb[0];
+                mHGaussFrameBuffer = fb[1];
+                initFrameBuffer(mVGaussFrameBuffer, mVGaussFrameBufferTex);
+                initFrameBuffer(mHGaussFrameBuffer, mHGaussFrameBufferTex);
 
                 mVertexShader = compileShader(GLES20.GL_VERTEX_SHADER, vertexShaderCode);
                 Log.i(TAG, "compileShader: " + mVertexShader);
@@ -185,15 +189,24 @@ public class MainActivity extends AppCompatActivity {
                 GLES20.glUniform1f(mWidthHandle, mImage.getWidth());
                 GLES20.glUniform1f(mHeightHandle, mImage.getHeight());
 
-                GLES20.glActiveTexture(GLES20.GL_TEXTURE0);
                 GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, mOriginTex);
                 GLES20.glUniform1i(mInputTexture, /* x= */ 0);
-
-                GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, mFrameBuffer);
+                GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, mVGaussFrameBuffer);
                 GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, /* first= */ 0, /* offset= */ VERTEX_COUNT);
                 GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0);
 
+                GLES20.glUniform1f(mVertical, 1f);
+                GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, mVGaussFrameBufferTex);
+                GLES20.glUniform1i(mInputTexture, /* x= */ 0);
+                GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, mHGaussFrameBuffer);
+                GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, /* first= */ 0, /* offset= */ VERTEX_COUNT);
+                GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0);
+
+
+
                 GLES20.glViewport(0, 0, mWidth, mHeight);
+                GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, mHGaussFrameBuffer);
+                GLES20.glUniform1i(mInputTexture, /* x= */ 0);
                 screenVerticesBuffer.position(TEXTURE_COORDINATE_COUNT);
                 GLES20.glVertexAttribPointer(
                         mTexCoord,
@@ -203,11 +216,6 @@ public class MainActivity extends AppCompatActivity {
                         STRIDE_BYTES,
                         screenVerticesBuffer);
                 GLES20.glEnableVertexAttribArray(mTexCoord);
-                GLES20.glUniform1f(mVertical, 1f);
-                GLES20.glActiveTexture(GLES20.GL_TEXTURE1);
-                GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, mFrameBufferTex);
-                GLES20.glUniform1i(mInputTexture, /* x= */ 1);
-
                 GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, /* first= */ 0, /* offset= */ VERTEX_COUNT);
             }
         });
@@ -218,7 +226,7 @@ public class MainActivity extends AppCompatActivity {
         GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, frameBuffer);
         GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, texture);
         GLES20.glFramebufferTexture2D(GLES20.GL_FRAMEBUFFER, GLES20.GL_COLOR_ATTACHMENT0,
-                GLES20.GL_TEXTURE_2D, mFrameBufferTex, 0);
+                GLES20.GL_TEXTURE_2D, mVGaussFrameBufferTex, 0);
         checkFramebufferStatus();
         GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0);
         GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, 0);
