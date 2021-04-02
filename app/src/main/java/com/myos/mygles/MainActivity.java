@@ -1,8 +1,8 @@
 package com.myos.mygles;
 
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.appcompat.widget.AppCompatSeekBar;
 
-import android.content.Context;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.opengl.GLES20;
@@ -10,11 +10,10 @@ import android.opengl.GLSurfaceView;
 import android.opengl.GLUtils;
 import android.os.Bundle;
 import android.util.Log;
+import android.widget.SeekBar;
 
-import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.InputStreamReader;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.FloatBuffer;
@@ -22,10 +21,11 @@ import java.nio.FloatBuffer;
 import javax.microedition.khronos.egl.EGLConfig;
 import javax.microedition.khronos.opengles.GL10;
 
+import static com.myos.mygles.Utils.*;
+
 public class MainActivity extends AppCompatActivity {
     private static final String TAG = "MainActivity";
     private GLSurfaceView mPreview;
-    private int mOriginTex;
     private static final float[] SCREEN_VERTEX_DATA = {
             // Vertex X, Y
             // Texture coordinates U, V
@@ -75,11 +75,21 @@ public class MainActivity extends AppCompatActivity {
     private int mWidthHandle;
     private int mHGaussFrameBuffer;
     private int mHGaussFrameBufferTex;
+    private int mDrawWidth;
+    private int mDrawHeight;
+    private AppCompatSeekBar mBlurTimesSeekBar;
+    private int mOriginTex;
+    private int mBlurTimes = 0;
+    private int mStepHandler;
+    private int mBlurStep = 1;
+    private AppCompatSeekBar mBlurStepSeekBar;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        setFullScreen(this);
         setContentView(R.layout.activity_main);
+
         BitmapFactory.Options opt = new BitmapFactory.Options();
         try (InputStream is = getResources().openRawResource(R.raw.sc)) {
             mImage = BitmapFactory.decodeStream(is, null, opt);
@@ -88,6 +98,49 @@ public class MainActivity extends AppCompatActivity {
             return;
         }
         Log.i(TAG, "onCreate: "+opt.outWidth+"x"+opt.outHeight);
+
+        mBlurTimesSeekBar = findViewById(R.id.blurTimesSeekBar);
+        mBlurTimesSeekBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override
+            public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
+                if (fromUser) {
+                    mBlurTimes = progress;
+                    if (mPreview != null) {
+                        mPreview.requestRender();
+                    }
+                }
+            }
+
+            @Override
+            public void onStartTrackingTouch(SeekBar seekBar) {
+
+            }
+
+            @Override
+            public void onStopTrackingTouch(SeekBar seekBar) {
+
+            }
+        });
+        mBlurStepSeekBar = findViewById(R.id.blurStepSeekBar);
+        mBlurStepSeekBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override
+            public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
+                if (fromUser) {
+                    mBlurStep = progress+1;
+                    mPreview.requestRender();
+                }
+            }
+
+            @Override
+            public void onStartTrackingTouch(SeekBar seekBar) {
+
+            }
+
+            @Override
+            public void onStopTrackingTouch(SeekBar seekBar) {
+
+            }
+        });
 
         vertexShaderCode = readStringFromResRaw(this, R.raw.vertex_shader);
         fragShaderCode = readStringFromResRaw(this, R.raw.gauss_frag_shader);
@@ -103,10 +156,6 @@ public class MainActivity extends AppCompatActivity {
         screenVerticesBuffer.position(0);
         screenVerticesBuffer.put(SCREEN_VERTEX_DATA).position(0);
 
-
-
-
-
         mPreview = findViewById(R.id.preview);
         mPreview.setEGLContextClientVersion(2);
         mPreview.setRenderer(new GLSurfaceView.Renderer() {
@@ -115,9 +164,9 @@ public class MainActivity extends AppCompatActivity {
                 int[] texs = new int[3];
                 GLES20.glGenTextures(3, texs, 0);
                 checkGLError();
-                mOriginTex = texs[0];
-                mVGaussFrameBufferTex = texs[1];
-                mHGaussFrameBufferTex = texs[2];
+                mVGaussFrameBufferTex = texs[0];
+                mHGaussFrameBufferTex = texs[1];
+                mOriginTex = texs[2];
                 initTexture(GLES20.GL_TEXTURE_2D, mImage.getWidth(), mImage.getHeight(), texs);
 
                 GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, mOriginTex);
@@ -142,6 +191,7 @@ public class MainActivity extends AppCompatActivity {
                 mOffset = GLES20.glGetUniformLocation(mProgram, "u_Offset");
                 mWeight = GLES20.glGetUniformLocation(mProgram, "u_Weight");
                 mVertical = GLES20.glGetUniformLocation(mProgram, "u_Vertical");
+                mStepHandler = GLES20.glGetUniformLocation(mProgram, "u_Step");
                 mWidthHandle = GLES20.glGetUniformLocation(mProgram, "u_Width");
                 mHeightHandle = GLES20.glGetUniformLocation(mProgram, "u_Height");
                 mInputTexture = GLES20.glGetUniformLocation(mProgram, "u_InputTexture");
@@ -154,10 +204,16 @@ public class MainActivity extends AppCompatActivity {
                 Log.i(TAG, "onSurfaceChanged: "+width+"x"+height);
                 mWidth = width;
                 mHeight = height;
+                final float wRatio = mWidth / (float)mImage.getWidth();
+                final float hRatio = mHeight / (float)mImage.getHeight();
+                float ratio = Math.min(wRatio, hRatio);
+                mDrawWidth = (int) (mImage.getWidth()* ratio);
+                mDrawHeight = (int) (mImage.getHeight() * ratio);
             }
 
             @Override
             public void onDrawFrame(GL10 gl) {
+                Log.i(TAG, "onDrawFrame: ");
                 GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT);
 
                 GLES20.glUseProgram(mProgram);
@@ -185,27 +241,29 @@ public class MainActivity extends AppCompatActivity {
 
                 GLES20.glUniform1fv(mOffset, 5, OFFSET, 0);
                 GLES20.glUniform1fv(mWeight, 5, WEIGHT, 0);
-                GLES20.glUniform1f(mVertical, 0f);
                 GLES20.glUniform1f(mWidthHandle, mImage.getWidth());
                 GLES20.glUniform1f(mHeightHandle, mImage.getHeight());
+                GLES20.glUniform1i(mStepHandler,mBlurStep);
 
-                GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, mOriginTex);
-                GLES20.glUniform1i(mInputTexture, /* x= */ 0);
-                GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, mVGaussFrameBuffer);
-                GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, /* first= */ 0, /* offset= */ VERTEX_COUNT);
-                GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0);
+                for (int i = 0; i < mBlurTimes; i++) {
+                    GLES20.glUniform1f(mVertical, 0f);
+                    GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, i == 0 ? mOriginTex : mHGaussFrameBufferTex);
+                    GLES20.glUniform1i(mInputTexture, /* x= */ 0);
+                    GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, mVGaussFrameBuffer);
+                    GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, /* first= */ 0, /* offset= */ VERTEX_COUNT);
+                    GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0);
 
-                GLES20.glUniform1f(mVertical, 1f);
-                GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, mVGaussFrameBufferTex);
-                GLES20.glUniform1i(mInputTexture, /* x= */ 0);
-                GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, mHGaussFrameBuffer);
-                GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, /* first= */ 0, /* offset= */ VERTEX_COUNT);
-                GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0);
+                    GLES20.glUniform1f(mVertical, 1f);
+                    GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, mVGaussFrameBufferTex);
+                    GLES20.glUniform1i(mInputTexture, /* x= */ 0);
+                    GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, mHGaussFrameBuffer);
+                    GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, /* first= */ 0, /* offset= */ VERTEX_COUNT);
+                    GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0);
+                }
 
-
-
-                GLES20.glViewport(0, 0, mWidth, mHeight);
-                GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, mHGaussFrameBuffer);
+                GLES20.glUniform1f(mVertical, -1f);
+                GLES20.glViewport(((mWidth-mDrawWidth)/2), (mHeight-mDrawHeight)/2, mDrawWidth, mDrawHeight);
+                GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, mBlurTimes > 0 ? mHGaussFrameBuffer : mOriginTex);
                 GLES20.glUniform1i(mInputTexture, /* x= */ 0);
                 screenVerticesBuffer.position(TEXTURE_COORDINATE_COUNT);
                 GLES20.glVertexAttribPointer(
@@ -222,105 +280,6 @@ public class MainActivity extends AppCompatActivity {
         mPreview.setRenderMode(GLSurfaceView.RENDERMODE_WHEN_DIRTY);
     }
 
-    private void initFrameBuffer(int frameBuffer, int texture) {
-        GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, frameBuffer);
-        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, texture);
-        GLES20.glFramebufferTexture2D(GLES20.GL_FRAMEBUFFER, GLES20.GL_COLOR_ATTACHMENT0,
-                GLES20.GL_TEXTURE_2D, mVGaussFrameBufferTex, 0);
-        checkFramebufferStatus();
-        GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0);
-        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, 0);
-    }
 
-    private void initTexture(int target, int width, int height, int... textures) {
-        for (int texture : textures) {
-            GLES20.glBindTexture(target, texture);
-            GLES20.glTexImage2D(GLES20.GL_TEXTURE_2D, 0, GLES20.GL_RGBA, width, height, 0,
-                    GLES20.GL_RGBA, GLES20.GL_UNSIGNED_BYTE, null);
-            GLES20.glTexParameteri(target, GLES20.GL_TEXTURE_WRAP_S, GLES20.GL_CLAMP_TO_EDGE);
-            GLES20.glTexParameteri(target, GLES20.GL_TEXTURE_WRAP_T, GLES20.GL_CLAMP_TO_EDGE);
-            GLES20.glTexParameteri(target, GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_LINEAR);
-            GLES20.glTexParameteri(target, GLES20.GL_TEXTURE_MAG_FILTER,  GLES20.GL_LINEAR);
-            checkGLError();
-        }
-        GLES20.glBindTexture(target, 0);
-    }
-
-    private void checkGLError() {
-        int error = GLES20.glGetError();
-        if (error != GLES20.GL_NO_ERROR) {
-            Log.e(TAG, "GLES error: " + error);
-            throw new RuntimeException("GLES error: " + error);
-        }
-    }
-
-    private static void checkFramebufferStatus() {
-        int status = GLES20.glCheckFramebufferStatus(GLES20.GL_FRAMEBUFFER);
-        if (status != GLES20.GL_FRAMEBUFFER_COMPLETE) {
-            String msg = "";
-            switch (status) {
-                case GLES20.GL_FRAMEBUFFER_INCOMPLETE_ATTACHMENT:
-                    msg = "GL_FRAMEBUFFER_INCOMPLETE_ATTACHMENT";
-                    break;
-                case GLES20.GL_FRAMEBUFFER_INCOMPLETE_DIMENSIONS:
-                    msg = "GL_FRAMEBUFFER_INCOMPLETE_DIMENSIONS";
-                    break;
-                case GLES20.GL_FRAMEBUFFER_INCOMPLETE_MISSING_ATTACHMENT:
-                    msg = "GL_FRAMEBUFFER_INCOMPLETE_MISSING_ATTACHMENT";
-                    break;
-                case GLES20.GL_FRAMEBUFFER_UNSUPPORTED:
-                    msg = "GL_FRAMEBUFFER_UNSUPPORTED";
-                    break;
-            }
-            throw new RuntimeException(msg + ":" + Integer.toHexString(status));
-        }
-    }
-
-
-    private static int linkProgram(int vertexShaderHandle, int fragmentShaderHandle) {
-        int programHandle = GLES20.glCreateProgram();
-        if (programHandle != 0) {
-            GLES20.glAttachShader(programHandle, vertexShaderHandle);
-            GLES20.glAttachShader(programHandle, fragmentShaderHandle);
-            GLES20.glLinkProgram(programHandle);
-            final int[] linkStatus = new int[1];
-            GLES20.glGetProgramiv(programHandle, GLES20.GL_LINK_STATUS, linkStatus, /* offset= */ 0);
-            if (linkStatus[0] == 0) {
-                GLES20.glDeleteProgram(programHandle);
-                programHandle = 0;
-            }
-        }
-        return programHandle;
-    }
-
-    private static int compileShader(int glVertexShader, String shaderCode) {
-        int handler = GLES20.glCreateShader(glVertexShader);
-        if (handler != 0) {
-            GLES20.glShaderSource(handler, shaderCode);
-            GLES20.glCompileShader(handler);
-            final int[] compileStatus = new int[1];
-            GLES20.glGetShaderiv(
-                    handler, GLES20.GL_COMPILE_STATUS, compileStatus, /* offset= */ 0);
-            if (compileStatus[0] == 0) {
-                GLES20.glDeleteShader(handler);
-                handler = 0;
-            }
-        }
-        return handler;
-    }
-
-    public static String readStringFromResRaw(Context context, int rawId){
-        StringBuilder sb = new StringBuilder();
-        try (BufferedReader reader = new BufferedReader(new InputStreamReader(context.getResources().openRawResource(rawId)))
-        ) {
-            String line;
-            while ((line = reader.readLine()) != null) {
-                sb.append(line).append('\n');
-            }
-        } catch (IOException e) {
-            e.printStackTrace();
-        }
-        return sb.toString();
-    }
 
 }
