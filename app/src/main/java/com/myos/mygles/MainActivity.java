@@ -17,6 +17,7 @@ import java.io.InputStream;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.FloatBuffer;
+import java.util.Arrays;
 
 import javax.microedition.khronos.egl.EGLConfig;
 import javax.microedition.khronos.opengles.GL10;
@@ -45,6 +46,10 @@ public class MainActivity extends AppCompatActivity {
 
     public static final float[] OFFSET = new float[]{0.0f, 1.0f, 2.0f, 3.0f, 4.0f};
     public static final float[] WEIGHT = new float[]{0.2270270270f, 0.1945945946f, 0.1216216216f, 0.0540540541f, 0.0162162162f};
+    public static final float[] WEIGHT_DEFAULT = new float[]{1f};
+    public static final int SIZE_DEFAULT = 1;
+    public static final float[] OFFSET_DEFAULT_H = new float[]{1f, 0f};
+    public static final float[] OFFSET_DEFAULT_V = new float[]{0f, 1f};
     private static final int BYTES_PER_FLOAT = 4;
     private static final int VERTEX_COUNT = 4;
     private static final int POSITION_OFFSET = 0;
@@ -53,6 +58,10 @@ public class MainActivity extends AppCompatActivity {
     private static final int TEXTURE_COORDINATE_OFFSET = 2;
     private static final int STRIDE_BYTES =
             (TEXTURE_COORDINATE_COUNT + TEXTURE_COORDINATE_OFFSET) * BYTES_PER_FLOAT;
+    private float[] mOffsetH;
+    private float[] mOffsetV;
+    private float[] mWeight;
+
     private FloatBuffer verticesBuffer;
     private String vertexShaderCode;
     private String fragShaderCode;
@@ -68,8 +77,8 @@ public class MainActivity extends AppCompatActivity {
     private int mPosition;
     private int mTexCoord;
     private int mInputTexture;
-    private int mOffset;
-    private int mWeight;
+    private int mOffsetHandle;
+    private int mWeightHandle;
     private int mVertical;
     private int mHeightHandle;
     private int mWidthHandle;
@@ -80,9 +89,7 @@ public class MainActivity extends AppCompatActivity {
     private AppCompatSeekBar mBlurTimesSeekBar;
     private int mOriginTex;
     private int mBlurTimes = 0;
-    private int mStepHandler;
-    private int mBlurStep = 1;
-    private AppCompatSeekBar mBlurStepSeekBar;
+    private int mSizeHandle;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -98,52 +105,36 @@ public class MainActivity extends AppCompatActivity {
             return;
         }
         Log.i(TAG, "onCreate: "+opt.outWidth+"x"+opt.outHeight);
-
-        mBlurTimesSeekBar = findViewById(R.id.blurTimesSeekBar);
-        mBlurTimesSeekBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
-            @Override
-            public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
-                if (fromUser) {
-                    mBlurTimes = progress;
-                    if (mPreview != null) {
-                        mPreview.requestRender();
-                    }
-                }
-            }
-
-            @Override
-            public void onStartTrackingTouch(SeekBar seekBar) {
-
-            }
-
-            @Override
-            public void onStopTrackingTouch(SeekBar seekBar) {
-
-            }
-        });
-        mBlurStepSeekBar = findViewById(R.id.blurStepSeekBar);
-        mBlurStepSeekBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
-            @Override
-            public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
-                if (fromUser) {
-                    mBlurStep = progress+1;
-                    mPreview.requestRender();
-                }
-            }
-
-            @Override
-            public void onStartTrackingTouch(SeekBar seekBar) {
-
-            }
-
-            @Override
-            public void onStopTrackingTouch(SeekBar seekBar) {
-
-            }
-        });
+        final float[] kernel = createKernel(1f, 13);
+//        mOffsetH = ByteBuffer.allocateDirect(kernel.length * 2 * BYTES_PER_FLOAT).asFloatBuffer();
+//        mOffsetH.position(0);
+//        mOffsetV = ByteBuffer.allocateDirect(kernel.length * 2 * BYTES_PER_FLOAT).asFloatBuffer();
+//        mOffsetV.position(0);
+//        for (int i = 2; i < kernel.length; i+=2) {
+//            mOffsetH.put((float)i / mImage.getWidth());
+//            mOffsetH.put(0f);
+//            mOffsetV.put(0f);
+//            mOffsetV.put((float)i / mImage.getHeight());
+//        }
+//        Log.i(TAG, "onCreate: "+mOffsetV.toString());
+//        mWeight = ByteBuffer.allocateDirect(kernel.length * BYTES_PER_FLOAT).asFloatBuffer();
+//        mWeight.position(0);
+//        mWeight.put(kernel);
+//        mWeight = Arrays.copyOf(kernel,256);
+        mWeight = kernel;
+        mOffsetV = new float[kernel.length * 2];
+        mOffsetH = new float[kernel.length * 2];
+        for (int i = 2; i < kernel.length * 2; i += 2) {
+            mOffsetH[i] = i / (float) mImage.getWidth();
+            mOffsetH[i+1] = 0f;
+            mOffsetV[i] = 0f;
+            mOffsetV[i+1] = i / (float) mImage.getHeight();
+        }
+        Log.i(TAG, "onCreate: "+ Arrays.toString(mOffsetH));
+        Log.i(TAG, "onCreate: "+ Arrays.toString(mOffsetV));
 
         vertexShaderCode = readStringFromResRaw(this, R.raw.vertex_shader);
-        fragShaderCode = readStringFromResRaw(this, R.raw.gauss_frag_shader);
+        fragShaderCode = readStringFromResRaw(this, R.raw.gaussian_frag_shader);
         verticesBuffer = ByteBuffer.allocateDirect(VERTEX_COUNT * STRIDE_BYTES)
                 .order(ByteOrder.nativeOrder())
                 .asFloatBuffer();
@@ -188,13 +179,11 @@ public class MainActivity extends AppCompatActivity {
                 Log.i(TAG, "linkProgram: " + mProgram);
                 mPosition = GLES20.glGetAttribLocation(mProgram, "a_Position");
                 mTexCoord = GLES20.glGetAttribLocation(mProgram, "a_TexCoord");
-                mOffset = GLES20.glGetUniformLocation(mProgram, "u_Offset");
-                mWeight = GLES20.glGetUniformLocation(mProgram, "u_Weight");
+                mOffsetHandle = GLES20.glGetUniformLocation(mProgram, "u_Offset");
+                mWeightHandle = GLES20.glGetUniformLocation(mProgram, "u_Weight");
                 mVertical = GLES20.glGetUniformLocation(mProgram, "u_Vertical");
-                mStepHandler = GLES20.glGetUniformLocation(mProgram, "u_Step");
-                mWidthHandle = GLES20.glGetUniformLocation(mProgram, "u_Width");
-                mHeightHandle = GLES20.glGetUniformLocation(mProgram, "u_Height");
                 mInputTexture = GLES20.glGetUniformLocation(mProgram, "u_InputTexture");
+                mSizeHandle = GLES20.glGetUniformLocation(mProgram, "u_Size");
                 checkGLError();
 
             }
@@ -239,14 +228,17 @@ public class MainActivity extends AppCompatActivity {
                         verticesBuffer);
                 GLES20.glEnableVertexAttribArray(mTexCoord);
 
-                GLES20.glUniform1fv(mOffset, 5, OFFSET, 0);
-                GLES20.glUniform1fv(mWeight, 5, WEIGHT, 0);
-                GLES20.glUniform1f(mWidthHandle, mImage.getWidth());
-                GLES20.glUniform1f(mHeightHandle, mImage.getHeight());
-                GLES20.glUniform1i(mStepHandler,mBlurStep);
+//                GLES20.glUniform1fv(mOffsetHandle, 5, OFFSET, 0);
+//                GLES20.glUniform1fv(mWeightHandle, 5, WEIGHT, 0);
+//                GLES20.glUniform1f(mWidthHandle, mImage.getWidth());
+//                GLES20.glUniform1f(mHeightHandle, mImage.getHeight());
+                GLES20.glUniform1fv(mWeightHandle, mWeight.length, mWeight, 0);
+                Log.i(TAG, "onDrawFrame: "+Arrays.toString(mWeight));
+                GLES20.glUniform1i(mSizeHandle, mWeight.length);
 
                 for (int i = 0; i < mBlurTimes; i++) {
                     GLES20.glUniform1f(mVertical, 0f);
+                    GLES20.glUniform2fv(mOffsetHandle, mOffsetV.length / 2, mOffsetV, 0);
                     GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, i == 0 ? mOriginTex : mHGaussFrameBufferTex);
                     GLES20.glUniform1i(mInputTexture, /* x= */ 0);
                     GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, mVGaussFrameBuffer);
@@ -254,6 +246,7 @@ public class MainActivity extends AppCompatActivity {
                     GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0);
 
                     GLES20.glUniform1f(mVertical, 1f);
+                    GLES20.glUniform2fv(mOffsetHandle, mOffsetH.length / 2, mOffsetH, 0);
                     GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, mVGaussFrameBufferTex);
                     GLES20.glUniform1i(mInputTexture, /* x= */ 0);
                     GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, mHGaussFrameBuffer);
@@ -278,6 +271,29 @@ public class MainActivity extends AppCompatActivity {
             }
         });
         mPreview.setRenderMode(GLSurfaceView.RENDERMODE_WHEN_DIRTY);
+
+        mBlurTimesSeekBar = findViewById(R.id.blurTimesSeekBar);
+        mBlurTimesSeekBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override
+            public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
+                if (fromUser) {
+                    mBlurTimes = progress;
+                    if (mPreview != null) {
+                        mPreview.requestRender();
+                    }
+                }
+            }
+
+            @Override
+            public void onStartTrackingTouch(SeekBar seekBar) {
+
+            }
+
+            @Override
+            public void onStopTrackingTouch(SeekBar seekBar) {
+
+            }
+        });
     }
 
 

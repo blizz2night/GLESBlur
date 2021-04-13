@@ -15,6 +15,7 @@ import androidx.appcompat.app.AppCompatActivity;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
+import java.util.Arrays;
 
 class Utils {
     private static final String TAG = "Utils";
@@ -145,5 +146,53 @@ class Utils {
             checkGLError();
         }
         GLES20.glBindTexture(target, 0);
+    }
+
+    public static final float SQRT_2PI = (float) Math.sqrt(Math.PI * 2);
+    // 1/(2*PI*sigma^2) * Math.exp((x^2+y^2)/(-2 * sigma^2))
+    public static float[] createKernel(float sigma, int size){
+        if (size % 2 == 0) {
+            size = size+1;
+        }
+        int radius = size / 2;
+        float pow_sigma = sigma * sigma;
+        final float[] floats = new float[radius + 1];
+        float sum = 0;
+        for (int i = 0; i < floats.length; i++) {
+            floats[i] = (float) Math.exp(-(i*i)/(2*pow_sigma));
+//            if (floats[i] < 0.02f) {
+//                floats[i] = 0;
+//            }
+            sum += floats[i];
+        }
+        Log.i(TAG, "createKernel: " + Arrays.toString(floats));
+        sum = sum * 2 - floats[0];
+        for (int i = 0; i < floats.length; i++) {
+            floats[i] = floats[i] / sum;
+        }
+        Log.i(TAG, "createKernel: "+ Arrays.toString(floats));
+        return floats;
+    }
+
+    public static void createKernelValue(float sigma, int size) {
+
+        double scale = - 1 / (2 * sigma * sigma);
+        double cons = 1 / (2 * Math.PI * sigma * sigma);
+
+        int center = size / 2;
+        float[] mKernelValue = new float[size];
+        double sum = 0;
+        for (int i = 0; i < size; i++) {
+            int x = i - center;
+            mKernelValue[i] = (float) (cons * Math.exp(scale * x * x));
+            sum += mKernelValue[i];
+        }
+
+        // The sum of the weighted averages is 1,
+        // so each item needs to be divided by sum.
+        for (int i = 0; i < size; i++) {
+            mKernelValue[i] /= sum;
+        }
+        Log.i(TAG, "createKernelValue: " + Arrays.toString(mKernelValue));
     }
 }
